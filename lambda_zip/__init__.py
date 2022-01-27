@@ -26,7 +26,19 @@ from zipfile import ZipFile
 
 local_deps_already_installed = set()
 logger = logging.getLogger(__name__)
-zip_omit = set()
+# Exclude these directories by default, because AWS Lambda environment provides them
+zip_omit = set([
+    '^boto3',
+    '^botocore',
+    '^dateutil',
+    '^pip',
+    '^python_dateutil',
+    '^jmespath',
+    '^s3transfer',
+    '^setuptools',
+    '^six',
+    '^urllib3',
+])
 
 def aws_lambda_update(
     function_name:str,
@@ -137,11 +149,11 @@ def install_to_dir(
         dep_data = toml.loads(toml_blob)
     except Exception as e:
         raise ValueError(F'Cannot open pyproject.toml in local_dependency directory {local_dep_dir}: {e}')
-    if 'lambda_zipper' in dep_data:
-        for omit_regex in dep_data['lambda_zipper'].get('zip_omit', []):
+    if 'lambda_zip' in dep_data:
+        for omit_regex in dep_data['lambda_zip'].get('zip_omit', []):
             zip_omit.add(omit_regex)
         sub_deps = set()
-        for sub_dep in dep_data['lambda_zipper'].get('local_dependency', []):
+        for sub_dep in dep_data['lambda_zip'].get('local_dependency', []):
             sub_dep_path = Path(local_dep_dir, sub_dep).absolute()
             sub_deps.add(sub_dep_path)
         sub_deps_unresolved = sub_deps - local_deps_already_installed
@@ -228,10 +240,10 @@ def cli_entry_point():
     metadata = {}
     if args.get('git', False):
         metadata = git_get_metadata(src_dir=args['src_dir'])
-    metadata['lambda_zipper_host'] = socket.gethostname()
-    metadata['lambda_zipper_timestamp'] = int(time.time())
-    metadata['lambda_zipper_user'] = getpass.getuser()
-    emit_metadata_yaml(dst_yaml_path=Path(args['tmp_dir'], 'lambda_zipper.yml'), metadata=metadata)
+    metadata['lambda_zip_host'] = socket.gethostname()
+    metadata['lambda_zip_timestamp'] = int(time.time())
+    metadata['lambda_zip_user'] = getpass.getuser()
+    emit_metadata_yaml(dst_yaml_path=Path(args['tmp_dir'], 'lambda_zip.yml'), metadata=metadata)
     if 'zip' in args:
         args['zip'] = Path(args['zip']).absolute()
     else:
