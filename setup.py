@@ -9,7 +9,7 @@ setup(
     description = 'Prepare ZIP file for deploying to AWS Lambda',
     keywords = ['AWS'],
     packages = find_packages(),
-    install_requires = ['boto3', 'GitPython'],
+    install_requires = ['boto3', 'GitPython', 'toml'],
     entry_points = {
         'console_scripts': [
             'lambda-zip = lambda_zip:cli_entry_point',
