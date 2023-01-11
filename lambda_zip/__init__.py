@@ -194,6 +194,11 @@ def s3_upload(
     s3_filename = s3_url.path.lstrip('/')
     if metadata is None:
         metadata = {}
+    else:
+        # stringify metadata for AWS
+        metadata = metadata.copy()
+        for k, v in metadata.items():
+            metadata[k] = str(v)
     s3 = boto3.client('s3')
     s3.upload_file(
         Filename=str(zip_filename),
