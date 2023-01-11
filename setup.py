@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    version='1.220601',
+    version='1.23011101',
     name = 'lambda_zip',
     author = 'Jeff Wheeler',
     author_email = 'jeffsw6@gmail.com',

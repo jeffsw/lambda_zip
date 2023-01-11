@@ -256,6 +256,7 @@ def cli_entry_point():
     create_zip_file(tmp_dir=args['tmp_dir'], zip_filename=args['zip'], zip_omit_patterns=zip_omit)
     if 'upload_s3_url' in args:
         s3_upload(
+            metadata=metadata,
             s3_url=args['upload_s3_url'],
             zip_filename=args['zip'],
         )
