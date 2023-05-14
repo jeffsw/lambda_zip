@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    version='1.23011102',
+    version='1.23043001',
     name = 'lambda_zip',
     author = 'Jeff Wheeler',
     author_email = 'jeffsw6@gmail.com',
@@ -9,7 +9,13 @@ setup(
     description = 'Prepare ZIP file for deploying to AWS Lambda',
     keywords = ['AWS'],
     packages = find_packages(),
-    install_requires = ['boto3', 'GitPython', 'toml'],
+    install_requires = [
+        'boto3',
+        'GitPython',
+        'packaging',
+        'pyyaml',
+        'toml'
+    ],
     entry_points = {
         'console_scripts': [
             'lambda-zip = lambda_zip:cli_entry_point',

@@ -96,3 +96,52 @@ optional arguments:
   --debug               Break into pdb debugger right away.
 ```
 
+# Layer Support
+
+| :exclamation: The layer feature requires pip >= 22.2         |
+| ------------------------------------------------------------ |
+| The `--report` and `--dry-run` options are needed for metadata |
+
+Lambda Layers may be used to store dependencies.  This could be helpful if you'd like to see your code
+in the AWS Lambda console editor, which has a 3 MiB code size limit.  The Lambda [deployment package size limit](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html#function-configuration-deployment-and-execution) still applies to the combined size of your lambda function ZIP plus all layer ZIPs.  As of this writing, that limit is 50 MiB zipped and 250 MiB unzipped.  Layers aren't a workaround for these limits.
+
+When you pass the `--layer-name` and `--layer-s3-url` arguments, and include the required configuration within your `pyproject.toml` (see below), a layer will be created with all dependencies.  It will omit the project directories or matching paths you've specified in the configuration.  For example:
+
+```toml
+[lambda_zipper]
+# you must include layer_omit_projects AND/OR layer_omit_paths to use lambda-zip's layer mode
+layer_omit_projects = ['my-proj']
+layer_omit_paths = ['^python/my_config.yml']
+```
+
+When using the layer mode, your python function deployment ZIP will not include any dependencies.  All those dependencies will be stored in the layer.
+
+## Metadata saved in layer description
+
+### Layer Description
+
+Build metadata will be saved into the layer description within the AWS API.  This 256-byte field will look like the below example, except that it may be truncated as needed to <= 256 bytes.
+
+```yaml
+branch: GH-10-pagination-support
+commit: f23306e47e3c93e28535581f561f7ed1e400f7fe
+describe: f23306e
+dirty: false
+host: boomer
+path: /Users/jsw/src/rpkilog/python/rpkilog
+timestamp: 1676932215
+untracked: 0
+user: jsw
+```
+
+## Update Reduction
+
+The AWS API provides the SHA-256 hash of existing versions of your layer.  When you invoke `lambda-zip` with layer mode, the hash of the resulting layer deployment ZIP will be compared to the available versions already in AWS.
+
+If an SHA-256 match is found, a new version doesn't need to be created.  Your new lambda (assuming `--aws-lambda-update` was given) will be configured to use the matching layer version.
+
+### Projects With `console_scripts` and Similar
+
+If your lambda's main project (its not dependencies) contains CLI entrypoints, e.g. `rpkilog-hapi` you should include those in `layer_omit_paths` or it may result in spurious updates of your layer, if that layer is used by multiple projects.  For example, if you use a common layer for `acme-httpapi` and `acme-nightly-job` lambdas, but `acme-httpapi` installs something into `bin/`, your layer will often be replaced by a new version due to the presence of `bin/acme-httpapi` when the layer is built from that project, but absence of that file when built from your other project.
+
+The reason for this caveat is there's no `pip uninstall --target <tmpdir> your_main_project` functionality in pip.  It's not that easy to correctly omit your project files from the layer.
