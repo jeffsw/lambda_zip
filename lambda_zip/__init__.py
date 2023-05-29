@@ -455,7 +455,7 @@ def s3_upload(
     zip_filename:Path,
     metadata:dict=None,
 ):
-    logger.info(F'S3 uploading F{str(zip_filename)} to {s3_url}')
+    logger.info(f'S3 uploading {str(zip_filename)} to {s3_url}')
     s3_url = urllib.parse.urlparse(s3_url)
     s3_bucket = s3_url.hostname
     s3_filename = s3_url.path.lstrip('/')
