@@ -28,6 +28,8 @@ import urllib
 import yaml
 from zipfile import ZipFile
 
+import botocore.errorfactory
+
 from lambda_zip.aws_lambda_layer import AwsLambdaLayer
 
 local_deps_already_installed = set()
@@ -324,30 +326,70 @@ def aws_lambda_update(
     function_name:str,
     s3_url:str,
     layer_arn:str=None,
+    retry_interval:float=15,
+    timeout:float=90,
 ):
     '''
     Wrapper around boto3.client('lambda').update_function_code()
     See https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/lambda.html#Lambda.Client.update_function_code
 
     If layer_arn != None, boto3.client('lambda').update_function_configuration() will be invoked.
+
+    Lambdas become "busy" for a while after each update.  Repeated updates can result in a ResourceConflictException
+    from the AWS API.  If this happens, we retry until timeout seconds have elapsed.
     '''
+    lam = boto3.client('lambda')
+    time_initial = time.time()
+    time_deadline = time_initial + timeout
+
+    # TODO: Add support for removing layer config.  Right now we would just leave it on.
+    # TODO: Get the current lambda configuration and don't do a spurious update if it is already configured
+    # to use the same layer version.
+    if layer_arn != None:
+        layer_list = [ layer_arn ]
+        logger.info(f'Lambda will use layers: {layer_list}')
+        upd_config_success = False
+        while time.time() < time_deadline:
+            try:
+                upd_config_response = lam.update_function_configuration(
+                    FunctionName=function_name,
+                    Layers=layer_list,
+                )
+                upd_config_success = True
+                break
+            except lam.exceptions.ResourceConflictException as exc:
+                logger.debug(f'Retryable exception upon invoking update_function_configuration: {exc}')
+                logger.info(f'Sleeping for {retry_interval} seconds before retrying config update.')
+                time.sleep(retry_interval)
+        if upd_config_success:
+            logger.info(f'Lambda configuration updated successfully')
+        else:
+            logger.critical(f'No more retries.  Failed to update lambda config & code.')
+            raise RuntimeError('No more retries.  Failed to update lambda config & code.')
+
+    # TODO: De-duplication
     logger.info(F'Updating lambda function {function_name}')
     s3_url = urllib.parse.urlparse(s3_url)
     s3_bucket = s3_url.hostname
     s3_filename = s3_url.path.lstrip('/')
-    lam = boto3.client('lambda')
-    upd_func_response = lam.update_function_code(
-        FunctionName=function_name,
-        S3Bucket=s3_bucket,
-        S3Key=s3_filename,
-    )
-    if layer_arn != None:
-        upd_config_response = lam.update_function_configuration(
-            Function_name=function_name,
-            Layers = [
-                layer_arn,
-            ],
-        )
+    while time.time() < time_deadline:
+        try:
+            upd_code_response = lam.update_function_code(
+                FunctionName=function_name,
+                S3Bucket=s3_bucket,
+                S3Key=s3_filename,
+            )
+            upd_code_success = True
+            break
+        except lam.exceptions.ResourceConflictException as exc:
+            logger.debug(f'Retryable exception upon invoking update_function_code: {exc}')
+            logger.info(f'Sleeping for {retry_interval} seconds before retrying code update.')
+            time.sleep(retry_interval)
+    if upd_code_success:
+        logger.info(f'Lambda code updated successfully')
+    else:
+        logger.critical('No more retries.  Failed to update lambda code.')
+        raise RuntimeError('No more retries.  Failed to update lambda code.')
 
 def create_zip_file(
     tmp_dir:Path,
@@ -668,7 +710,7 @@ def cli_entry_point():
             aws_lambda_update(
                 function_name=args['aws_lambda_update'],
                 s3_url=args['upload_s3_url'],
-                layer_arn=use_layer_version.LayerArn,
+                layer_arn=use_layer_version.LayerVersionArn,
             )
         else:
             aws_lambda_update(
