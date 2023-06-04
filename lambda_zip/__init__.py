@@ -67,15 +67,6 @@ class NewAwsLambdaLayerZip:
     '''
     boto3_s3_client = None
 
-    layer_metadata_publish_fields = [
-        'branch',
-        'commit',
-        'describe',
-        'dirty',
-        'sha256',
-        'untracked',
-    ]
-
     deps_builtin_to_runtime = set([
         'boto3',
         'botocore',
@@ -88,6 +79,19 @@ class NewAwsLambdaLayerZip:
         'six',
         'urllib3',
     ])
+
+    layer_metadata_publish_fields = [
+        'branch',
+        'commit',
+        'describe',
+        'dirty',
+        'sha256',
+        'untracked',
+    ]
+    layer_metadata_truncate_fields_to_length = {
+        'branch': 40,
+        'describe': 20,
+    }
 
     def __init__(
         self,
@@ -190,6 +194,10 @@ class NewAwsLambdaLayerZip:
         '''
         if getattr(self, 'metadata', None) == None:
             self.update_metadata()
+        description_metadata = self.metadata.copy()
+        for field_name, max_len in self.layer_metadata_truncate_fields_to_length.items():
+            if len(description_metadata[field_name]) > max_len:
+                description_metadata[field_name] = description_metadata[field_name][0:max_len - 3] + '...'
         retstr = json.dumps(self.metadata, indent=None, separators=(',', ':'), sort_keys=True)
         return retstr
 
