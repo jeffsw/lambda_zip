@@ -7,9 +7,11 @@ Optionally, upload the zip to S3.
 Optionally, invoke AWS Lambda API to update a specified function.
 '''
 import argparse
+import base64
 import boto3
 import getpass
 import git
+import hashlib
 import json
 import logging
 import os
@@ -25,6 +27,8 @@ import toml
 import urllib
 import yaml
 from zipfile import ZipFile
+
+from lambda_zip.aws_lambda_layer import AwsLambdaLayer
 
 local_deps_already_installed = set()
 logger = logging.getLogger(__name__)
@@ -61,6 +65,15 @@ class NewAwsLambdaLayerZip:
     '''
     boto3_s3_client = None
 
+    layer_metadata_publish_fields = [
+        'branch',
+        'commit',
+        'describe',
+        'dirty',
+        'sha256',
+        'untracked',
+    ]
+
     deps_builtin_to_runtime = set([
         'boto3',
         'botocore',
@@ -82,8 +95,13 @@ class NewAwsLambdaLayerZip:
         omit_pathnames:set = None,
         omit_path_patterns:set = None,
         omit_projects:set = None,
+        s3_url:urllib.parse.ParseResult = None,
         zip_filename:Path = None,
     ):
+        '''
+        Note: If the given s3_url ends with '/', the layer name followed by '.zip' will be added to it.
+        For example, s3://jeff-bucket/artifacts/ becomes s3://jeff-bucket/artifacts/my_layer.zip
+        '''
         # copy arguments to object
         self.name = name
         self.src_dir = src_dir
@@ -96,9 +114,9 @@ class NewAwsLambdaLayerZip:
             self.zip_filename = Path(self.src_dir.parent, self.name + '_layer.zip')
         else:
             self.zip_filename = zip_filename
+        # args with complexity
+        self.s3_url_set(s3_url)
 
-        # get metadata which may be used later for S3 attributes & layer description
-        self.update_metadata()
         # install src_dir project(s) & dependencies into tmp_dir_for_layer + '/python'
         self.tmp_python_path = Path(self.tmp_dir_for_layer, 'python')
         self.tmp_python_path.mkdir(exist_ok=True, mode=0o755, parents=True)
@@ -126,6 +144,32 @@ class NewAwsLambdaLayerZip:
         )
         self.zip_namelist = zf.namelist()
 
+        # Our hash digest is not a digest of the ZIP file itself.  We need a repeatable hash that solves
+        # several problems:
+        #   1) `pip install --target <dir>` causes that <dir> name to end up in the `.pyc` files
+        #   2) `pip install --target <dir>` causes a unix timestamp encoded in `.pyc` header to be the current time
+        #   3) `.zip` files themselves contain timestamps which would be the current build time
+        #   4) want to add a file `lambda_zip_metadata.yml` later to include more build metadata
+        hasher = hashlib.sha256()
+        for zipped_filename in sorted(self.zip_namelist):
+            if zipped_filename.endswith('.pyc') or zipped_filename == 'lambda_zip_metadata.yml':
+                continue
+            hasher.update(bytes(zipped_filename, 'utf-8')) # include the filename itself in hashed content
+            with zf.open(zipped_filename) as zf_bin:
+                while True:
+                    buffer = zf_bin.read(1048576)
+                    if not buffer:
+                        break
+                    hasher.update(buffer)
+        self.sha256_b64digest = base64.b64encode(hasher.digest()).decode('utf-8')
+        self.sha256_digest = hasher.digest()
+        self.sha256_hexdigest = hasher.hexdigest()
+
+        zf.close()
+
+        # get metadata which may be used later for S3 attributes & layer description
+        self.update_metadata()
+
     def get_boto3_s3_client(self):
         if self.boto3_s3_client == None:
             self.boto3_s3_client = boto3.client('s3')
@@ -136,6 +180,55 @@ class NewAwsLambdaLayerZip:
             self.boto3_lambda_client = boto3.client('lambda')
         return self.boto3_lambda_client
 
+    def encode_metadata_for_description(self):
+        '''
+        We put metadata into the layer description so we can query it efficiently from the AWS API.  This
+        is how we de-duplicate; avoiding publishing useless, repeated copies of a layer over and over in
+        CI/CD pipeline if there have been no changes.
+        '''
+        if getattr(self, 'metadata', None) == None:
+            self.update_metadata()
+        retstr = json.dumps(self.metadata, indent=None, separators=(',', ':'), sort_keys=True)
+        return retstr
+
+    def publish(self):
+        '''
+        Wrapper around boto3 publish_layer_version.  Encodes metadata in description.
+        '''
+        encoded_metadata = self.encode_metadata_for_description()
+        client = self.get_boto3_lambda_client()
+        pub_response = client.publish_layer_version(
+            LayerName = self.name,
+            Description = encoded_metadata,
+            Content = {
+                'S3Bucket': self.s3_bucket,
+                'S3Key': self.s3_key,
+                # TODO: Add 'S3ObjectVersion' here
+            },
+            # CompatibleRuntimes omitted
+            # CompatibleArchitectures omitted
+        )
+        self.layer_version_obj = pub_response
+        self.version = pub_response['Version']
+        self.version_arn = pub_response['LayerVersionArn']
+        logger.info(f"published new layer version {self.version} SHA-256 {self.metadata['sha256b64']}")
+        return self.layer_version_obj
+
+    def s3_url_set(self, s3_url):
+        if s3_url == None:
+            return
+        if not isinstance(s3_url, urllib.parse.ParseResult):
+            raise TypeError(f"s3_url must be an urllib.parse.ParseResult; instead it's a: {type(s3_url)}")
+        if s3_url.scheme != 's3':
+            raise ValueError(f"s3_url.scheme must be 's3', e.g. URL starts with s3://.  Instead, got: {s3_url}")
+        if s3_url.geturl().endswith('/'):
+            # If the given s3_url ends in '/' add self.name + '.zip' onto the end of the URL.
+            self.s3_url = urllib.parse.urlparse(s3_url.geturl() + self.name + '.zip')
+        else:
+            self.s3_url = s3_url
+        self.s3_bucket = self.s3_url.netloc
+        self.s3_key = self.s3_url.path
+
     def update_metadata(self):
         self.metadata = dict()
         try:
@@ -143,30 +236,20 @@ class NewAwsLambdaLayerZip:
         except:
             logger.error(f'Cannot get git metadata from {self.src_dir}')
         self.metadata.update(get_builder_metadata())
+        self.metadata['sha256b64'] = self.sha256_b64digest
 
     def upload_to_s3(
         self,
-        s3_url:urllib.parse.ParseResult=None,
     ):
-        '''
-        Upload the newly-created layer ZIP to S3.
-        If the given s3_url ends in '/' the layer-name, followed by '.zip', will be appended to the path.
-        For example, s3://jeff-bucket/artifacts/ becomes s3://jeff-bucket/artifacts/my_layer.zip
-        '''
-        if not isinstance(s3_url, urllib.parse.ParseResult):
-            raise TypeError(f's3_url argument must be a urllib.parse.ParseResult object')
-        if s3_url.scheme != 's3':
-            raise ValueError(f's3_url.scheme must be "s3", e.g. the URL must be like "s3://bucket-name/..."')
+        if self.s3_url == None:
+            raise KeyError(f's3_url is missing from this object.  Cannot upload.')
 
-        if s3_url.geturl().endswith('/'):
-            self.s3_url = urllib.parse.urlparse(s3_url.geturl() + self.name + '.zip')
-        else:
-            self.s3_url = s3_url
-        self.s3_bucket = self.s3_url.netloc
-        self.s3_key = self.s3_url.path
         metadata_stringified = {}
-        for k, v in self.s3_metadata:
+        for k, v in self.metadata.items():
             metadata_stringified[k] = str(v)
+        logger.info(f'S3 uploading {str(self.zip_filename)} to s3://{self.s3_bucket}/{self.s3_key}')
+        # TODO change to using put_object() so we get a response object with then new S3 object version.
+        # https://boto3.amazonaws.com/v1/documentation/api/1.9.42/reference/services/s3.html#S3.Bucket.put_object
         result = self.get_boto3_s3_client().upload_file(
             Filename = str(self.zip_filename),
             Bucket = self.s3_bucket,
@@ -240,21 +323,31 @@ class NewAwsLambdaZip:
 def aws_lambda_update(
     function_name:str,
     s3_url:str,
+    layer_arn:str=None,
 ):
     '''
     Wrapper around boto3.client('lambda').update_function_code()
     See https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/lambda.html#Lambda.Client.update_function_code
+
+    If layer_arn != None, boto3.client('lambda').update_function_configuration() will be invoked.
     '''
     logger.info(F'Updating lambda function {function_name}')
     s3_url = urllib.parse.urlparse(s3_url)
     s3_bucket = s3_url.hostname
     s3_filename = s3_url.path.lstrip('/')
     lam = boto3.client('lambda')
-    lam.update_function_code(
+    upd_func_response = lam.update_function_code(
         FunctionName=function_name,
         S3Bucket=s3_bucket,
         S3Key=s3_filename,
     )
+    if layer_arn != None:
+        upd_config_response = lam.update_function_configuration(
+            Function_name=function_name,
+            Layers = [
+                layer_arn,
+            ],
+        )
 
 def create_zip_file(
     tmp_dir:Path,
@@ -475,7 +568,6 @@ def s3_upload(
     )
 
 def cli_entry_point():
-    logging.basicConfig(level='INFO')
     ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
     ap.add_argument('--aws-lambda-update', type=str, help='Specifies the AWS Lambda function name to update.  Requires --upload-s3-url.')
     #TODO: implement --extra-dir and --extra-file
@@ -486,7 +578,7 @@ def cli_entry_point():
     ap.add_argument('--keep', default=False, action='store_true', help='Keep temporary directory for troubleshooting')
     ap.add_argument('--layer-name', type=str, help='Sets the layer name which will contain dependencies')
     ap.add_argument('--layer-s3-url', help='Upload layer to S3 URL, e.g. s3://jsw-lambda/ or s3://jsw-lambda/layername.zip')
-    ap.add_argument('--log-level', type=str, help='Sets the logging level.  Try CRITICAL, ERROR, INFO, or DEBUG.  Default is INFO.')
+    ap.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Sets the logging level.  Must be one of CRITICAL, ERROR, WARNING, INFO, or DEBUG.  Default is INFO.')
     ap.add_argument('--omit', default=[], action='append', help='Regexes used to omit matching path/filenames from the ZIP file, e.g. --omit ^boto3')
     ap.add_argument('--src-dir', type=Path, default=Path('.'), help='Directory containing the lambda package source, e.g. python/example_lambda.  Default to current directory.')
     ap.add_argument('--tmp-dir', type=Path, help='Temporary directory used to install dependencies for zipping')
@@ -496,6 +588,11 @@ def cli_entry_point():
     args = vars(ap.parse_args())
     if 'debug' in args and args['debug']==True:
         pdb.set_trace()
+    logging.basicConfig(
+        level=args.get('log_level', 'INFO'),
+        datefmt='%Y-%m-%dT%H:%M:%S',
+        format='%(asctime)s.%(msecs)03d %(levelname)s %(filename)s %(lineno)d %(funcName)s %(message)s',
+    )
     if 'log_level' in args:
         logger.setLevel(args['log_level'])
 
@@ -541,13 +638,23 @@ def cli_entry_point():
         zip_filename = args['zip'],
     )
 
-    layer_tmp_dir = Path(args['tmp_dir'], 'layer')
-    layer_zip = NewAwsLambdaLayerZip(
-        name = args['layer_name'],
-        src_dir = args['src_dir'],
-        omit_pathnames = lambda_zip.zip_namelist,
-        tmp_dir_for_layer = layer_tmp_dir,
-    )
+    if 'layer_name' in args:
+        layer_tmp_dir = Path(args['tmp_dir'], 'layer')
+        layer_zip = NewAwsLambdaLayerZip(
+            name = args['layer_name'],
+            src_dir = args['src_dir'],
+            omit_pathnames = lambda_zip.zip_namelist,
+            s3_url = urllib.parse.urlparse(args['layer_s3_url']) if args['layer_s3_url'] else None,
+            tmp_dir_for_layer = layer_tmp_dir,
+        )
+        # get existing layer version(s) and compare their SHA-256 to newly-created .ZIP
+        layer = AwsLambdaLayer.get_lambda_layer(name=args['layer_name'])
+        if duplicate := layer.get_highest_version_matching_sha256b64(layer_zip.sha256_b64digest):
+            logger.info(f'DUPLICATE new layer .zip has same SHA-256 as already-existing version {duplicate.Version}')
+            use_layer_version = duplicate
+        else:
+            layer_zip.upload_to_s3()
+            use_layer_version = layer_zip.publish()
 
     if 'upload_s3_url' in args:
         s3_upload(
@@ -555,8 +662,16 @@ def cli_entry_point():
             s3_url=args['upload_s3_url'],
             zip_filename = lambda_zip.zip_filename,
         )
+
     if 'aws_lambda_update' in args:
-        aws_lambda_update(
-            function_name=args['aws_lambda_update'],
-            s3_url=args['upload_s3_url'],
-        )
+        if 'layer_name' in args:
+            aws_lambda_update(
+                function_name=args['aws_lambda_update'],
+                s3_url=args['upload_s3_url'],
+                layer_arn=use_layer_version.LayerArn,
+            )
+        else:
+            aws_lambda_update(
+                function_name=args['aws_lambda_update'],
+                s3_url=args['upload_s3_url'],
+            )
