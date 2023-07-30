@@ -40,6 +40,65 @@ what goes where and how.
 
 # Classes
 
+```mermaid
+classDiagram
+    AWSLambdaCommonNewZip --|> AWSLambdaCommon
+
+    AWSLambdaFunction --|> AWSLambdaCommon
+    AWSLambdaFunctionNewZip --|> AWSLambdaCommonNewZip
+
+    AWSLambdaLayer --|> AWSLambdaCommon
+    AWSLambdaLayerNewZip --|> AWSLambdaCommonNewZip
+    AWSLambdaLayerVersion --|> AWSLambdaLayer
+
+    AWSLambdaCommon --> AWSLambdaMetadata
+
+    class AWSLambdaCommon {
+        metadata_description_encoded
+        metadata_zip_embedded
+        name
+        packages_builtin_to_lambda_runtime
+    }
+
+    class AWSLambdaCommonNewZip {
+        hashb64
+        hash_ignore_pathnames
+        omit_packages
+        omit_pathnames
+        omit_regex
+        src_dir
+        tmp_dir
+        zip_handle
+        zip_namelist
+        zip_path
+        hashb64_calc()
+        upload_to_s3()
+    }
+    
+    class AWSLambdaFunctionNewZip {
+        lambda_function
+        update_lambda()
+    }
+    
+    class AWSLambdaLayerNewZip {
+        published_layer_version
+        publish()
+    }
+    
+    class AWSLambdaMetadata {
+        branch
+        commit
+        describe
+        dirty
+        hashb64
+        untracked
+        description_encoded_str()
+        new_from_description_str()
+        new_from_src_dir_and_zip()
+        yaml_str()
+    }
+```
+
 ## AWSLambdaFunction
 
 ## AWSLambdaFunctionNewZip
