@@ -48,15 +48,36 @@ classDiagram
     AWSLambdaFunctionNewZip --|> AWSLambdaCommonNewZip
 
     AWSLambdaLayer --|> AWSLambdaCommon
+
     AWSLambdaLayerNewZip --|> AWSLambdaCommonNewZip
+    AWSLambdaLayerNewZip ..> AWSLambdaLayerVersion
     AWSLambdaLayerVersion --|> AWSLambdaLayer
 
-    AWSLambdaCommon --> AWSLambdaMetadata
+    AWSLambdaCommon ..> AWSLambdaMetadata
+
+    AWSLambdaFunctionNewZip ..> AWSLambdaFunction
+    AWSLambdaFunctionNewZip ..> AWSLambdaMetadata
+
+    AWSLambdaApiAbc
+    AWSLambdaApiMock --|> AWSLambdaApiAbc
+    AWSLambdaApiWrap --|> AWSLambdaApiAbc
+
+    AWSLambdaFunction ..> AWSLambdaApiAbc
+    AWSLambdaFunctionNewZip ..> AWSLambdaApiAbc
+    AWSLambdaLayer ..> AWSLambdaApiAbc
+    AWSLambdaLayerNewZip ..> AWSLambdaApiAbc
+
+    class AWSLambdaFunction {
+        name
+    }
+
+    class AWSLambdaLayer {
+        name
+    }
 
     class AWSLambdaCommon {
         metadata_description_encoded
         metadata_zip_embedded
-        name
         packages_builtin_to_lambda_runtime
     }
 
