@@ -8,8 +8,9 @@ class AWSLambdaApiAbc(ABC):
     This isn't meant for exposing all of Lambda's functionality.  Rather, it's documenting which functionality
     lambda-zip uses and therefore needs to mock for testing.
     """
+
     @abstractmethod
-    def function_get (
+    def function_get(
         self,
         name: str,
         version: int = None,
