@@ -19,6 +19,8 @@ class AwsLambdaFunction:
         '''
         Get a given function from the AWS API and return an AwsLambdaFunction object.
         Wraps boto3 Lambda.Client.client-get_function()
+
+        :param qualifier: This is an optional function version number.  AWS named it horribly.
         '''
         if boto3_client == None:
             boto3_client = boto3.client('lambda')

@@ -52,20 +52,21 @@ classDiagram
     AWSLambdaLayerNewZip --|> AWSLambdaCommonNewZip
     AWSLambdaLayerNewZip ..> AWSLambdaLayerVersion
     AWSLambdaLayerVersion --|> AWSLambdaLayer
+    %% AWSLambdaLayerVersion ..> AWSLambdaApiAbc
 
     AWSLambdaCommon ..> AWSLambdaMetadata
 
     AWSLambdaFunctionNewZip ..> AWSLambdaFunction
     AWSLambdaFunctionNewZip ..> AWSLambdaMetadata
 
-    AWSLambdaApiAbc
-    AWSLambdaApiMock --|> AWSLambdaApiAbc
-    AWSLambdaApiWrap --|> AWSLambdaApiAbc
+    %% AWSLambdaApiAbc
+    %% AWSLambdaApiMock --|> AWSLambdaApiAbc
+    %% AWSLambdaApiWrap --|> AWSLambdaApiAbc
 
-    AWSLambdaFunction ..> AWSLambdaApiAbc
-    AWSLambdaFunctionNewZip ..> AWSLambdaApiAbc
-    AWSLambdaLayer ..> AWSLambdaApiAbc
-    AWSLambdaLayerNewZip ..> AWSLambdaApiAbc
+    %% AWSLambdaFunction ..> AWSLambdaApiAbc
+    %% AWSLambdaFunctionNewZip ..> AWSLambdaApiAbc
+    %% AWSLambdaLayer ..> AWSLambdaApiAbc
+    %% AWSLambdaLayerNewZip ..> AWSLambdaApiAbc
 
     class AWSLambdaFunction {
         name
