@@ -54,10 +54,10 @@ classDiagram
     AWSLambdaLayerVersion --|> AWSLambdaLayer
     %% AWSLambdaLayerVersion ..> AWSLambdaApiAbc
 
-    AWSLambdaCommon ..> AWSLambdaMetadata
+    AWSLambdaCommon ..> LambdaZipMetadata
 
     AWSLambdaFunctionNewZip ..> AWSLambdaFunction
-    AWSLambdaFunctionNewZip ..> AWSLambdaMetadata
+    AWSLambdaFunctionNewZip ..> LambdaZipMetadata
 
     %% AWSLambdaApiAbc
     %% AWSLambdaApiMock --|> AWSLambdaApiAbc
@@ -107,7 +107,7 @@ classDiagram
         publish()
     }
     
-    class AWSLambdaMetadata {
+    class LambdaZipMetadata {
         branch
         commit
         describe

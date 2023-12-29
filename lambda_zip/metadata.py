@@ -1,17 +1,34 @@
+from zipfile import ZipFile
+
 
 class LambdaZipMetadata:
-    layer_publish_fields = {
+    description_encoded_fields = {
         'branch',
         'commit',
         'describe',
         'dirty',
         'sha256',
-        'untracked',
+        'untracked'
     }
-    layer_truncate_fields_to_length = {
+    description_encoded_fields_truncate_to_length = {
         'branch': 40,
         'describe': 20,
     }
+
+    def __init__(
+        self,
+        branch: str,
+        commit: str,
+        describe: str,
+        dirty: bool,
+        untracked: bool,
+        sha256: str = None,
+    ):
+        pass
+
+    @classmethod
+    def new_from_zip_file_obj(cls, zf: ZipFile):
+        pass
 
     def encode_metadata_for_lambda_layer_description(self) -> str:
         """
